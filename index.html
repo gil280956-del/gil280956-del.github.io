@@ -80,6 +80,130 @@ function shuffle(arr) {
 }
 
 // ============================================================
+//  합격 로드맵 (학습 가이드)
+// ============================================================
+const GUIDE_RULES = [
+  {
+    accent: "#06b6d4",
+    emoji: "💻",
+    title: "코드는 “답 가리고” 손으로 직접 적으세요",
+    body: "C 포인터·배열, Java 상속·오버라이딩, Python 슬라이싱은 종이에 값 변화를 적으며 따라가세요. 코드 문제 394개가 이 앱 최대 자산 — 여기서 합격이 갈립니다.",
+    tag: "최우선",
+  },
+  {
+    accent: "#f59e0b",
+    emoji: "🔍",
+    title: "정답키는 신뢰하되 맹신 금지",
+    body: "C·Java 출력이 헷갈리면 직접 돌려 확인하세요. 띄어쓰기·영한 표기 변형은 앱은 인정해도 실전 채점은 더 깐깐합니다.",
+    tag: "정확도",
+  },
+  {
+    accent: "#fb7185",
+    emoji: "🆕",
+    title: "신기술·보안 용어는 외부 자료로 보강",
+    body: "정보시스템 구축관리(신기술·보안)는 이 앱의 상대적 약점이자 매 회차 새 용어가 나오는 영역. 최신 자료로 반드시 보충하세요.",
+    tag: "약점 보완",
+  },
+  {
+    accent: "#34d399",
+    emoji: "✍️",
+    title: "서술형은 키워드 자가채점 → 문장 완성",
+    body: "모범답안의 핵심 키워드가 다 들어갔는지 체크하되, 실전은 더 엄격하다고 가정하고 완전한 문장으로 써보세요.",
+    tag: "서술형",
+  },
+  {
+    accent: "#a78bfa",
+    emoji: "⏱️",
+    title: "모의고사는 실전처럼 시간 체크하며",
+    body: "2시간 30분 타이머를 켜고 460문항을 회차 단위로 푸세요. 아는 것과 별개로 시간 배분을 몸에 익혀야 실전에서 안 무너집니다.",
+    tag: "실전 감각",
+  },
+];
+
+function StudyGuide() {
+  return (
+    <div style={{ marginTop: 30 }}>
+      <div style={{ textAlign: "center", marginBottom: 16 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2.5, color: "#818cf8" }}>STUDY GUIDE</div>
+        <h2 style={{ fontSize: 21, fontWeight: 800, margin: "5px 0 6px", letterSpacing: "-0.5px" }}>🎯 합격 로드맵</h2>
+        <p style={{ fontSize: 12.5, color: "#94a3b8", margin: 0, lineHeight: 1.7 }}>
+          합격선 <b style={{ color: "#fff" }}>60점</b> · 코드+SQL이 전체의 <b style={{ color: "#fff" }}>40~50%</b> — 여기서 결과가 갈립니다
+        </p>
+      </div>
+
+      <div
+        style={{
+          background: "linear-gradient(135deg,rgba(99,102,241,.20),rgba(139,92,246,.14))",
+          border: "1px solid rgba(129,140,248,.35)",
+          borderRadius: 16,
+          padding: "16px 18px",
+          marginBottom: 16,
+          textAlign: "center",
+        }}
+      >
+        <div style={{ fontSize: 14.5, fontWeight: 800, lineHeight: 1.6 }}>
+          정답 <span style={{ color: "#f87171" }}>암기 ❌</span> &nbsp;→&nbsp; 이해·손으로 직접 <span style={{ color: "#34d399" }}>✅</span>
+        </div>
+        <div style={{ fontSize: 12, color: "#cbd5e1", marginTop: 7, lineHeight: 1.7 }}>
+          처음 보는 코드를 손으로 따라가고, 처음 보는 용어를 맥락으로 잡아내야 통과합니다.
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gap: 11 }}>
+        {GUIDE_RULES.map((r, i) => (
+          <div
+            key={i}
+            style={{
+              display: "flex",
+              gap: 14,
+              background: "rgba(255,255,255,.05)",
+              border: "1px solid rgba(255,255,255,.10)",
+              borderLeft: `3px solid ${r.accent}`,
+              borderRadius: 14,
+              padding: "15px 16px",
+            }}
+          >
+            <div
+              style={{
+                width: 40,
+                height: 40,
+                flexShrink: 0,
+                borderRadius: 11,
+                background: `${r.accent}22`,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: 20,
+              }}
+            >
+              {r.emoji}
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 14.5, fontWeight: 800 }}>{r.title}</span>
+                <span
+                  style={{
+                    fontSize: 10.5,
+                    fontWeight: 700,
+                    color: r.accent,
+                    background: `${r.accent}1f`,
+                    padding: "2px 8px",
+                    borderRadius: 20,
+                  }}
+                >
+                  {r.tag}
+                </span>
+              </div>
+              <div style={{ fontSize: 12.5, color: "#cbd5e1", lineHeight: 1.7 }}>{r.body}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
 //  메인 앱 (라우터)
 // ============================================================
 function App() {
@@ -171,12 +295,15 @@ function App() {
           </button>
         </div>
 
-        <div style={{ ...S.card, marginTop: 24 }}>
-          <h3 style={{ margin: "0 0 12px", fontSize: 14, color: "#94a3b8" }}>📋 학습 가이드</h3>
+        <StudyGuide />
+
+        <div style={{ ...S.card, marginTop: 18 }}>
+          <h3 style={{ margin: "0 0 12px", fontSize: 14, color: "#94a3b8" }}>📋 4단계 학습 순서</h3>
           <ol style={{ margin: 0, paddingLeft: 18, fontSize: 13, color: "#cbd5e1", lineHeight: 2 }}>
-            <li><b>이론 암기장</b>의 두문자로 핵심 목록 뼈대를 먼저 외우세요.</li>
-            <li>플래시카드로 개념별 살을 붙이고 '다시' 카드만 반복하세요.</li>
-            <li><b>AI 모의고사</b>로 회차별 실전 점검 → 60점 합격선 확인.</li>
+            <li><b>뼈대</b> — 이론 암기장의 <b>두문자</b>로 핵심 목록 골격부터 (SOLID·ACID·OSI 7계층…).</li>
+            <li><b>살</b> — 플래시카드·비교표로 개념을 붙이고 '다시' 카드만 반복.</li>
+            <li><b>근육</b> — 코드·SQL 개념노트로 <b>손 코딩</b> 훈련(답 가리고 출력 예측).</li>
+            <li><b>실전</b> — 기출 380 → 모의고사 460을 <b>시간 재고</b> 풀어 60점 합격선 확인.</li>
           </ol>
         </div>
 
