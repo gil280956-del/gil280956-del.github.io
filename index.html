@@ -80,6 +80,117 @@ function shuffle(arr) {
 }
 
 // ============================================================
+//  학습 기록 (LocalStorage) — 오답/회독/이어하기/일일
+// ============================================================
+const LS = {
+  attempts: "ipe.attempts.v1",
+  rounds: "ipe.rounds.v1",
+  resume: "ipe.resume.v1",
+  daily: "ipe.daily.v1",
+  settings: "ipe.settings.v1",
+};
+function loadJSON(key, fallback) {
+  try {
+    const s = localStorage.getItem(key);
+    return s ? JSON.parse(s) : fallback;
+  } catch (e) {
+    return fallback;
+  }
+}
+function saveJSON(key, obj) {
+  try {
+    localStorage.setItem(key, JSON.stringify(obj));
+  } catch (e) {}
+}
+function qidOf(set, roundIdx, no) {
+  return `${set}#${roundIdx}#${no}`;
+}
+function todayStr(d) {
+  const t = d || new Date();
+  return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`;
+}
+const SET_LABEL = { ai: "AI 모의고사", gichul: "기출", mock2: "모의고사" };
+const SET_ACCENT = { ai: "#6366f1", gichul: "#f59e0b", mock2: "#8b5cf6" };
+// let 바인딩(하이드레이션 후 교체)을 호출 시점에 읽어야 실제 데이터가 잡힌다
+function examsForSet(set) {
+  return set === "gichul" ? GICHUL_EXAMS : set === "mock2" ? MOCK2_EXAMS : ALL_EXAMS;
+}
+function starStr(n) {
+  return (n || 0) >= 1 ? "★".repeat(Math.min(n, 3)) : "";
+}
+function blankAttempt(set, roundIdx, q) {
+  return { set, roundIdx, no: q.no, subject: q.subject, type: q.type, attempts: 0, wrong: 0, star: 0, pinned: false, mastered: false, correctStreak: 0, lastResult: null, lastAt: 0 };
+}
+// 시도 1건 기록 + ★ 자동 격상("또 틀리면 ★")
+function recordAttempt(set, roundIdx, q, correct) {
+  const id = qidOf(set, roundIdx, q.no);
+  const map = loadJSON(LS.attempts, {});
+  const e = { ...blankAttempt(set, roundIdx, q), ...(map[id] || {}) };
+  e.set = set; e.roundIdx = roundIdx; e.no = q.no; e.subject = q.subject; e.type = q.type;
+  const hadWrong = (e.wrong || 0) > 0;
+  e.attempts = (e.attempts || 0) + 1;
+  if (correct) {
+    e.correctStreak = (e.correctStreak || 0) + 1;
+    e.lastResult = "o";
+    // 한 번이라도 맞히면 졸업(오답 복습에서 제거)
+    e.mastered = true;
+  } else {
+    e.wrong = (e.wrong || 0) + 1;
+    e.correctStreak = 0;
+    e.lastResult = "x";
+    e.mastered = false;
+    if (hadWrong) e.star = Math.min((e.star || 0) + 1, 3);
+  }
+  e.lastAt = Date.now();
+  map[id] = e;
+  saveJSON(LS.attempts, map);
+  return e;
+}
+function toggleStarPin(set, roundIdx, q) {
+  const id = qidOf(set, roundIdx, q.no);
+  const map = loadJSON(LS.attempts, {});
+  const e = { ...blankAttempt(set, roundIdx, q), ...(map[id] || {}) };
+  e.set = set; e.roundIdx = roundIdx; e.no = q.no; e.subject = q.subject; e.type = q.type;
+  e.pinned = !e.pinned;
+  map[id] = e;
+  saveJSON(LS.attempts, map);
+  return e.pinned;
+}
+function isPinned(set, roundIdx, no) {
+  const e = loadJSON(LS.attempts, {})[qidOf(set, roundIdx, no)];
+  return !!(e && e.pinned);
+}
+// 회차 결과(회독 +1 / 점수)
+function recordRound(set, roundIdx, correct, total) {
+  const map = loadJSON(LS.rounds, {});
+  const s = map[set] || {};
+  const e = s[roundIdx] || { rounds: 0, lastScore: 0, bestScore: 0, total, lastAt: 0 };
+  e.rounds = (e.rounds || 0) + 1;
+  e.lastScore = correct;
+  e.bestScore = Math.max(e.bestScore || 0, correct);
+  e.total = total;
+  e.lastAt = Date.now();
+  s[roundIdx] = e; map[set] = s;
+  saveJSON(LS.rounds, map);
+}
+function saveResume(set, roundIdx, no) {
+  saveJSON(LS.resume, { set, roundIdx, no, updatedAt: Date.now() });
+}
+// 일일 학습량 + 연속일(streak)
+function bumpDaily(field, n) {
+  const d = loadJSON(LS.daily, { days: {}, streak: 0, lastDay: null });
+  const t = todayStr();
+  if (!d.days[t]) d.days[t] = { solved: 0, correct: 0, reviewed: 0 };
+  d.days[t][field] = (d.days[t][field] || 0) + n;
+  if (d.lastDay !== t) {
+    const y = new Date(); y.setDate(y.getDate() - 1);
+    d.streak = d.lastDay === todayStr(y) ? (d.streak || 0) + 1 : 1;
+    d.lastDay = t;
+  }
+  saveJSON(LS.daily, d);
+}
+
+// ============================================================
 //  합격 로드맵 (학습 가이드)
 // ============================================================
 const GUIDE_RULES = [
@@ -216,6 +327,7 @@ function App() {
       <ExamApp
         onHome={() => setView("main")}
         exams={GICHUL_EXAMS}
+        setId="gichul"
         label="기출문제집"
         accent="#f59e0b"
         subtitle="2020~2025년 실기 기출 19회분 · 회당 20문제 (총 380문제)"
@@ -226,12 +338,14 @@ function App() {
       <ExamApp
         onHome={() => setView("main")}
         exams={MOCK2_EXAMS}
+        setId="mock2"
         label="모의고사"
         accent="#8b5cf6"
         subtitle="모의고사 23회분 · 회당 20문제 (총 460문제)"
       />
     );
   if (view === "code") return <CodeApp onHome={() => setView("main")} />;
+  if (view === "review") return <ReviewApp onHome={() => setView("main")} />;
 
   // ----- 메인 홈 -----
   return (
@@ -293,6 +407,16 @@ function App() {
             </div>
             <span style={S.arrow}>›</span>
           </button>
+
+          <button onClick={() => setView("review")} style={{ ...S.bigCard, borderColor: "#f43f5e" }}>
+            <div style={{ fontSize: 38 }}>⭐</div>
+            <div style={{ textAlign: "left", flex: 1 }}>
+              <div style={S.bigTitle}>오답 복습</div>
+              <div style={S.bigDesc}>틀린 문제만 모아 다시 풀기</div>
+              <div style={S.bigSub}>또 틀리면 ★ 자동 격상 · 시험 직전 ★★ 집중 모드</div>
+            </div>
+            <span style={S.arrow}>›</span>
+          </button>
         </div>
 
         <StudyGuide />
@@ -315,12 +439,13 @@ function App() {
   );
 }
 
-function ExamApp({ onHome, exams = ALL_EXAMS, label = "AI 모의고사", accent = "#6366f1", subtitle }) {
+function ExamApp({ onHome, exams = ALL_EXAMS, label = "AI 모의고사", accent = "#6366f1", subtitle, setId = "ai" }) {
   const [phase, setPhase] = useState("home"); // home | exam | result
   const [roundIdx, setRoundIdx] = useState(0);
   const [current, setCurrent] = useState(0);
   const [inputs, setInputs] = useState({});
   const [confirmed, setConfirmed] = useState({});
+  const [starVer, setStarVer] = useState(0);
 
   const exam = exams[roundIdx];
   const questions = exam.questions;
@@ -345,8 +470,45 @@ function ExamApp({ onHome, exams = ALL_EXAMS, label = "AI 모의고사", accent 
     setInputs((prev) => ({ ...prev, [key(current)]: val }));
   }
 
+  function gradeOne(qq, u) {
+    if (qq.type === "essay") {
+      const g = gradeEssay(u, qq.keywords);
+      return g.total > 0 && g.hit / g.total >= 0.7;
+    }
+    return gradeShort(u, qq.answer);
+  }
+
   function confirmCurrent() {
     setConfirmed((prev) => ({ ...prev, [key(current)]: true }));
+    const qq = questions[current];
+    const ok = gradeOne(qq, inputs[key(current)] || "");
+    recordAttempt(setId, roundIdx, qq, ok);
+    bumpDaily("solved", 1);
+    if (ok) bumpDaily("correct", 1);
+    saveResume(setId, roundIdx, qq.no);
+  }
+
+  function toggleStar() {
+    toggleStarPin(setId, roundIdx, q);
+    setStarVer((v) => v + 1);
+  }
+
+  // 결과 화면 진입: 개별 확인하지 않은 문항을 모두 채점 결과대로 기록(빈칸=오답도 포함) + 회차 점수 저장
+  function goResult() {
+    const { correct, detail } = computeResult();
+    detail.forEach(({ i, ok }) => {
+      const kk = key(i);
+      if (confirmed[kk]) return; // 개별 '정답 확인' 시 이미 기록됨 → 중복 방지
+      const answered = (inputs[kk] || "").trim() !== "";
+      recordAttempt(setId, roundIdx, questions[i], ok); // 빈칸이면 오답으로 기록되어 오답 복습에 뜬다
+      if (answered) {
+        bumpDaily("solved", 1);
+        if (ok) bumpDaily("correct", 1);
+      }
+    });
+    recordRound(setId, roundIdx, correct, questions.length);
+    saveResume(setId, roundIdx, questions[current].no);
+    setPhase("result");
   }
 
   function nextQ() {
@@ -523,8 +685,14 @@ function ExamApp({ onHome, exams = ALL_EXAMS, label = "AI 모의고사", accent 
         </div>
 
         {/* question */}
-        <div style={S.examCard}>
-          <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
+        <div style={{ ...S.examCard, position: "relative" }}>
+          <button onClick={toggleStar} aria-label="별표 고정"
+            style={{ position: "absolute", top: 12, right: 12, width: 40, height: 40, borderRadius: 12, border: "none", cursor: "pointer", lineHeight: 1, fontSize: 20,
+              background: isPinned(setId, roundIdx, q.no) ? "rgba(251,191,36,.18)" : "rgba(255,255,255,.06)",
+              color: isPinned(setId, roundIdx, q.no) ? "#fbbf24" : "#64748b" }}>
+            {isPinned(setId, roundIdx, q.no) ? "★" : "☆"}
+          </button>
+          <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap", paddingRight: 44 }}>
             <span style={{ ...S.tag, background: q.type === "code" ? "rgba(251,191,36,.2)" : q.type === "essay" ? "rgba(168,85,247,.2)" : "rgba(99,102,241,.2)", color: q.type === "code" ? "#fbbf24" : q.type === "essay" ? "#c084fc" : "#a5b4fc" }}>
               {q.type === "code" ? "💻 코드" : q.type === "essay" ? "✍️ 약술형" : "✏️ 단답형"}
             </span>
@@ -587,14 +755,14 @@ function ExamApp({ onHome, exams = ALL_EXAMS, label = "AI 모의고사", accent 
               {q.type === "essay" ? "모범답안 확인" : "정답 확인"}
             </button>
           ) : (
-            <button onClick={current === questions.length - 1 ? () => setPhase("result") : nextQ} style={{ ...S.btn, ...S.btnGreen, flex: 2 }}>
+            <button onClick={current === questions.length - 1 ? goResult : nextQ} style={{ ...S.btn, ...S.btnGreen, flex: 2 }}>
               {current === questions.length - 1 ? "📊 채점 결과 보기" : "다음 →"}
             </button>
           )}
         </div>
 
         {answeredCount >= 1 && (
-          <button onClick={() => setPhase("result")} style={{ ...S.btn, width: "100%", background: "rgba(239,68,68,.12)", border: "1px solid rgba(239,68,68,.4)", color: "#f87171" }}>
+          <button onClick={goResult} style={{ ...S.btn, width: "100%", background: "rgba(239,68,68,.12)", border: "1px solid rgba(239,68,68,.4)", color: "#f87171" }}>
             지금 채점하기 ({answeredCount}/{questions.length} 입력)
           </button>
         )}
@@ -603,6 +771,239 @@ function ExamApp({ onHome, exams = ALL_EXAMS, label = "AI 모의고사", accent 
   );
 }
 
+
+function ReviewApp({ onHome }) {
+  const [tick, setTick] = useState(0);
+  const [statusF, setStatusF] = useState("all"); // all | s1 | s2 | pin
+  const [subjF, setSubjF] = useState("ALL");
+  const [phase, setPhase] = useState("list"); // list | solve
+  const [queue, setQueue] = useState([]);
+  const [qi, setQi] = useState(0);
+  const [val, setVal] = useState("");
+  const [checked, setChecked] = useState(false);
+
+  const entries = useMemo(() => {
+    const map = loadJSON(LS.attempts, {});
+    const list = [];
+    Object.keys(map).forEach((id) => {
+      const e = map[id];
+      const inQueue = e.pinned || (!e.mastered && ((e.wrong || 0) > 0 || (e.star || 0) > 0));
+      if (!inQueue) return;
+      const exam = examsForSet(e.set)[e.roundIdx];
+      if (!exam) return;
+      const q = exam.questions.find((x) => x.no === e.no);
+      if (!q) return;
+      list.push({ id, e, q, exam });
+    });
+    const setOrder = { ai: 0, gichul: 1, mock2: 2 };
+    const byNumber = (a, b) =>
+      (setOrder[a.e.set] - setOrder[b.e.set]) ||
+      ((a.e.roundIdx || 0) - (b.e.roundIdx || 0)) ||
+      ((a.e.no || 0) - (b.e.no || 0));
+    list.sort((a, b) => {
+      const sa = (a.e.star || 0) > 0, sb = (b.e.star || 0) > 0;
+      if (sa !== sb) return sa ? -1 : 1; // 별 있는 문제를 맨 위로
+      return byNumber(a, b); // 각 그룹 안에서는 번호 순
+    });
+    return list;
+  }, [tick]);
+
+  const filtered = useMemo(
+    () =>
+      entries.filter(({ e }) => {
+        if (statusF === "s1" && (e.star || 0) < 1) return false;
+        if (statusF === "s2" && (e.star || 0) < 2) return false;
+        if (statusF === "pin" && !e.pinned) return false;
+        if (subjF !== "ALL" && e.subject !== subjF) return false;
+        return true;
+      }),
+    [entries, statusF, subjF]
+  );
+
+  const focusCount = useMemo(() => entries.filter(({ e }) => (e.star || 0) >= 2).length, [entries]);
+
+  function startSolve(list) {
+    if (!list.length) return;
+    setQueue(list);
+    setQi(0);
+    setVal("");
+    setChecked(false);
+    setPhase("solve");
+  }
+  function backToList() {
+    setPhase("list");
+    setTick((t) => t + 1);
+  }
+  function resetAll() {
+    if (!window.confirm("모든 학습 기록(오답·별표·회독·오늘 공부)을 초기화할까요?\n되돌릴 수 없습니다.")) return;
+    [LS.attempts, LS.rounds, LS.resume, LS.daily].forEach((k) => {
+      try { localStorage.removeItem(k); } catch (e) {}
+    });
+    setStatusF("all");
+    setSubjF("ALL");
+    setTick((t) => t + 1);
+  }
+
+  // ---------- SOLVE ----------
+  if (phase === "solve") {
+    const item = queue[qi];
+    if (!item) return null;
+    const q = item.q;
+    const autoOk = q.type !== "essay" ? gradeShort(val, q.answer) : null;
+    const essayInfo = q.type === "essay" ? gradeEssay(val, q.keywords) : null;
+
+    function check() {
+      const good = q.type === "essay" ? essayInfo.total > 0 && essayInfo.hit / essayInfo.total >= 0.7 : autoOk;
+      recordAttempt(item.e.set, item.e.roundIdx, q, good);
+      bumpDaily("reviewed", 1);
+      setChecked(true);
+    }
+    function next() {
+      if (qi < queue.length - 1) {
+        setQi(qi + 1);
+        setVal("");
+        setChecked(false);
+      } else backToList();
+    }
+
+    return (
+      <div style={S.page}>
+        <div style={{ maxWidth: 760, margin: "0 auto" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+            <button onClick={backToList} style={S.linkBtn}>← 목록</button>
+            <h2 style={{ margin: 0, fontSize: 15, color: "#fca5a5" }}>오답 복습 · {qi + 1}/{queue.length}</h2>
+            <span style={{ fontSize: 13, color: "#fbbf24" }}>{starStr(item.e.star) || "·"}</span>
+          </div>
+
+          <div style={S.examCard}>
+            <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
+              <span style={{ ...S.tag, background: (SET_ACCENT[item.e.set] || "#64748b") + "22", color: SET_ACCENT[item.e.set] || "#94a3b8" }}>
+                {item.exam.title || SET_LABEL[item.e.set] + " " + item.exam.round + "회"}
+              </span>
+              <span style={{ ...S.tag, background: (SUBJECT_COLORS[q.subject] || "#64748b") + "22", color: SUBJECT_COLORS[q.subject] || "#94a3b8" }}>{q.subject}</span>
+              {q.lang && <span style={{ ...S.tag, background: (LANG_COLORS[q.lang] || "#64748b") + "22", color: LANG_COLORS[q.lang] || "#94a3b8" }}>{q.lang}</span>}
+            </div>
+
+            <p style={{ fontSize: 15.5, lineHeight: 1.75, margin: "0 0 16px", whiteSpace: "pre-line" }}>
+              <strong>{q.no}.</strong> {q.q}
+            </p>
+
+            {q.code && <pre style={S.code}>{q.code}</pre>}
+
+            {q.type === "essay" ? (
+              <textarea value={val} onChange={(e) => setVal(e.target.value)} disabled={checked} placeholder="답안을 서술하세요 (핵심 키워드 위주로 작성)" rows={4} style={S.textarea} />
+            ) : (
+              <input value={val} onChange={(e) => setVal(e.target.value)} disabled={checked}
+                placeholder={q.type === "code" ? "출력 결과를 입력하세요" : "정답을 입력하세요"} style={S.input}
+                onKeyDown={(e) => { if (e.key === "Enter" && val.trim() && !checked) check(); }} />
+            )}
+
+            {checked && q.type !== "essay" && (
+              <div style={{ ...S.feedback, background: autoOk ? "rgba(52,211,153,.12)" : "rgba(248,113,113,.12)", borderColor: autoOk ? "#34d399" : "#f87171" }}>
+                <div style={{ fontWeight: 700, color: autoOk ? "#34d399" : "#f87171", marginBottom: 6, fontSize: 14 }}>{autoOk ? "⭕ 정답" : "❌ 오답"}</div>
+                <div style={{ fontSize: 13.5, color: "#e2e8f0", marginBottom: 4 }}><strong>정답:</strong> {q.answer.slice(0, 3).join(" / ")}</div>
+                <div style={{ fontSize: 13, color: "#cbd5e1", lineHeight: 1.6 }}>💡 {q.explanation}</div>
+              </div>
+            )}
+
+            {checked && q.type === "essay" && (
+              <div style={{ ...S.feedback, background: "rgba(168,85,247,.1)", borderColor: "#a855f7" }}>
+                <div style={{ fontWeight: 700, color: "#c084fc", marginBottom: 8, fontSize: 14 }}>✍️ 모범답안 비교 (키워드 {essayInfo.hit}/{essayInfo.total} 포함)</div>
+                <div style={{ fontSize: 13.5, color: "#e2e8f0", lineHeight: 1.7, marginBottom: 10, background: "rgba(0,0,0,.25)", padding: 12, borderRadius: 8 }}>{q.modelAnswer}</div>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {q.keywords.map((k) => {
+                    const hit = essayInfo.matched.includes(k);
+                    return <span key={k} style={{ fontSize: 11, padding: "3px 9px", borderRadius: 12, background: hit ? "rgba(52,211,153,.2)" : "rgba(255,255,255,.08)", color: hit ? "#34d399" : "#64748b" }}>{hit ? "✓ " : ""}{k}</span>;
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div style={{ display: "flex", gap: 10 }}>
+            {!checked ? (
+              <button onClick={check} disabled={!val.trim()} style={{ ...S.btn, ...S.btnPrimary, flex: 1, opacity: val.trim() ? 1 : 0.5 }}>
+                {q.type === "essay" ? "모범답안 확인" : "정답 확인"}
+              </button>
+            ) : (
+              <button onClick={next} style={{ ...S.btn, ...S.btnGreen, flex: 1 }}>{qi < queue.length - 1 ? "다음 →" : "복습 완료"}</button>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ---------- LIST ----------
+  return (
+    <div style={S.page}>
+      <div style={{ maxWidth: 720, margin: "0 auto" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+          <button onClick={onHome} style={S.linkBtn}>← 메인 메뉴</button>
+          <button onClick={resetAll} style={{ ...S.linkBtn, fontSize: 12, color: "#64748b" }}>기록 초기화</button>
+        </div>
+        <div style={{ textAlign: "center", marginBottom: 20 }}>
+          <div style={{ fontSize: 46 }}>⭐</div>
+          <h1 style={{ fontSize: 26, fontWeight: 800, margin: "8px 0 4px" }}>오답 복습</h1>
+          <p style={{ color: "#94a3b8", margin: 0, fontSize: 14 }}>틀린 문제만 모아 다시 · 또 틀리면 ★ 자동 격상</p>
+        </div>
+
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+          {[["all", "전체 오답"], ["s1", "★ 이상"], ["s2", "★★ 이상"], ["pin", "고정 ⭐"]].map(([k, lbl]) => (
+            <button key={k} onClick={() => setStatusF(k)} style={{ ...S.chip, whiteSpace: "nowrap", ...(statusF === k ? S.chipActive : {}) }}>{lbl}</button>
+          ))}
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
+          {["ALL", ...SUBJECTS].map((s) => (
+            <button key={s} onClick={() => setSubjF(s)} style={{ ...S.chip, whiteSpace: "nowrap", ...(subjF === s ? S.chipActive : {}) }}>{s === "ALL" ? "전체 과목" : s}</button>
+          ))}
+        </div>
+
+        {filtered.length === 0 ? (
+          <div style={{ ...S.card, textAlign: "center", color: "#94a3b8", padding: "40px 20px" }}>
+            <div style={{ fontSize: 40, marginBottom: 10 }}>🎉</div>
+            {entries.length === 0
+              ? "아직 오답이 없습니다 — 시험을 풀면 틀린 문제가 자동으로 여기에 모입니다."
+              : "이 필터에 해당하는 오답이 없습니다."}
+          </div>
+        ) : (
+          <div style={{ display: "grid", gap: 10, marginBottom: focusCount > 0 ? 96 : 20 }}>
+            <div style={{ fontSize: 12.5, color: "#64748b", marginBottom: 2 }}>{filtered.length}문제</div>
+            {filtered.map((item) => {
+              const { e, q, exam, id } = item;
+              return (
+                <button key={id} onClick={() => startSolve([item])} style={{ ...S.roundCard, textAlign: "left", minWidth: 0, boxSizing: "border-box" }}>
+                  <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 6 }}>
+                        <span style={{ ...S.tag, fontSize: 11, background: (SET_ACCENT[e.set] || "#64748b") + "22", color: SET_ACCENT[e.set] || "#94a3b8" }}>{exam.title || SET_LABEL[e.set] + " " + exam.round + "회"}</span>
+                        <span style={{ ...S.tag, fontSize: 11, background: (SUBJECT_COLORS[q.subject] || "#64748b") + "22", color: SUBJECT_COLORS[q.subject] || "#94a3b8" }}>{q.subject}</span>
+                      </div>
+                      <div style={{ fontSize: 13.5, color: "#e2e8f0", lineHeight: 1.5, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden", wordBreak: "break-word" }}>{q.no}. {q.q}</div>
+                      <div style={{ fontSize: 11.5, color: "#64748b", marginTop: 4 }}>{e.wrong || 0}회 오답{e.pinned ? " · 고정" : ""}</div>
+                    </div>
+                    <div style={{ color: "#fbbf24", fontSize: 15, whiteSpace: "nowrap", flexShrink: 0 }}>{starStr(e.star) || "·"}</div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {focusCount > 0 && (
+          <div style={{ position: "fixed", left: 0, right: 0, bottom: 0, padding: 14, background: "linear-gradient(to top, rgba(15,23,42,.96), rgba(15,23,42,0))" }}>
+            <div style={{ maxWidth: 720, margin: "0 auto" }}>
+              <button onClick={() => startSolve(shuffle(entries.filter(({ e }) => (e.star || 0) >= 2)))}
+                style={{ ...S.btn, width: "100%", background: "linear-gradient(135deg,#f43f5e,#e11d48)", color: "#fff" }}>
+                🔥 시험 직전 집중 — ★★ 이상 {focusCount}문제 셔플
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 function FlashApp({ onHome }) {
   const [mode, setMode] = useState("home"); // home | flashcard | compare | mnemonic
