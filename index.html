@@ -189,6 +189,22 @@ function bumpDaily(field, n) {
   }
   saveJSON(LS.daily, d);
 }
+// 오답 복습 대상(졸업 안 한 오답/별표/고정) 수집 — 오답 복습·오늘 공부 공용
+function collectReviewEntries() {
+  const map = loadJSON(LS.attempts, {});
+  const list = [];
+  Object.keys(map).forEach((id) => {
+    const e = map[id];
+    const inQueue = e.pinned || (!e.mastered && ((e.wrong || 0) > 0 || (e.star || 0) > 0));
+    if (!inQueue) return;
+    const exam = examsForSet(e.set)[e.roundIdx];
+    if (!exam) return;
+    const q = exam.questions.find((x) => x.no === e.no);
+    if (!q) return;
+    list.push({ id, e, q, exam });
+  });
+  return list;
+}
 
 // ============================================================
 //  합격 로드맵 (학습 가이드)
@@ -318,34 +334,47 @@ function StudyGuide() {
 //  메인 앱 (라우터)
 // ============================================================
 function App() {
-  const [view, setView] = useState("main"); // main | exam | flash
+  const [view, setView] = useState("main"); // main | exam | flash | gichul | mock2 | code | review | today
+  const [resumeReq, setResumeReq] = useState(null); // 이어풀기 요청 {set, roundIdx, no}
+  const [reviewQueue, setReviewQueue] = useState(null); // 오늘의 복습 큐
 
-  if (view === "exam") return <ExamApp onHome={() => setView("main")} />;
-  if (view === "flash") return <FlashApp onHome={() => setView("main")} />;
+  const goMain = () => { setResumeReq(null); setReviewQueue(null); setView("main"); };
+  const goResume = (set, roundIdx, no) => {
+    setResumeReq({ set, roundIdx, no });
+    setView(set === "gichul" ? "gichul" : set === "mock2" ? "mock2" : "exam");
+  };
+  const goReviewQueue = (list) => { setReviewQueue(list); setView("review"); };
+  const resumeFor = (set) => (resumeReq && resumeReq.set === set ? resumeReq : null);
+
+  if (view === "exam") return <ExamApp onHome={goMain} resumeAt={resumeFor("ai")} />;
+  if (view === "flash") return <FlashApp onHome={goMain} />;
   if (view === "gichul")
     return (
       <ExamApp
-        onHome={() => setView("main")}
+        onHome={goMain}
         exams={GICHUL_EXAMS}
         setId="gichul"
         label="기출문제집"
         accent="#f59e0b"
         subtitle="2020~2025년 실기 기출 19회분 · 회당 20문제 (총 380문제)"
+        resumeAt={resumeFor("gichul")}
       />
     );
   if (view === "mock2")
     return (
       <ExamApp
-        onHome={() => setView("main")}
+        onHome={goMain}
         exams={MOCK2_EXAMS}
         setId="mock2"
         label="모의고사"
         accent="#8b5cf6"
         subtitle="모의고사 23회분 · 회당 20문제 (총 460문제)"
+        resumeAt={resumeFor("mock2")}
       />
     );
-  if (view === "code") return <CodeApp onHome={() => setView("main")} />;
-  if (view === "review") return <ReviewApp onHome={() => setView("main")} />;
+  if (view === "code") return <CodeApp onHome={goMain} />;
+  if (view === "review") return <ReviewApp onHome={goMain} initialQueue={reviewQueue} />;
+  if (view === "today") return <TodayApp onHome={goMain} onResume={goResume} onReviewQueue={goReviewQueue} />;
 
   // ----- 메인 홈 -----
   return (
@@ -408,12 +437,22 @@ function App() {
             <span style={S.arrow}>›</span>
           </button>
 
-          <button onClick={() => setView("review")} style={{ ...S.bigCard, borderColor: "#f43f5e" }}>
+          <button onClick={() => { setReviewQueue(null); setView("review"); }} style={{ ...S.bigCard, borderColor: "#f43f5e" }}>
             <div style={{ fontSize: 38 }}>⭐</div>
             <div style={{ textAlign: "left", flex: 1 }}>
               <div style={S.bigTitle}>오답 복습</div>
               <div style={S.bigDesc}>틀린 문제만 모아 다시 풀기</div>
               <div style={S.bigSub}>또 틀리면 ★ 자동 격상 · 시험 직전 ★★ 집중 모드</div>
+            </div>
+            <span style={S.arrow}>›</span>
+          </button>
+
+          <button onClick={() => setView("today")} style={{ ...S.bigCard, borderColor: "#22c55e" }}>
+            <div style={{ fontSize: 38 }}>📅</div>
+            <div style={{ textAlign: "left", flex: 1 }}>
+              <div style={S.bigTitle}>오늘 공부</div>
+              <div style={S.bigDesc}>이어풀기 · 오늘의 복습 큐 · 목표 진행</div>
+              <div style={S.bigSub}>마지막 위치에서 이어서 · 연속 학습일(streak)</div>
             </div>
             <span style={S.arrow}>›</span>
           </button>
@@ -439,10 +478,12 @@ function App() {
   );
 }
 
-function ExamApp({ onHome, exams = ALL_EXAMS, label = "AI 모의고사", accent = "#6366f1", subtitle, setId = "ai" }) {
-  const [phase, setPhase] = useState("home"); // home | exam | result
-  const [roundIdx, setRoundIdx] = useState(0);
-  const [current, setCurrent] = useState(0);
+function ExamApp({ onHome, exams = ALL_EXAMS, label = "AI 모의고사", accent = "#6366f1", subtitle, setId = "ai", resumeAt = null }) {
+  const resumeOk = resumeAt && exams[resumeAt.roundIdx];
+  const resumeCur = resumeOk ? Math.max(0, exams[resumeAt.roundIdx].questions.findIndex((x) => x.no === resumeAt.no)) : 0;
+  const [phase, setPhase] = useState(resumeOk ? "exam" : "home"); // home | exam | result
+  const [roundIdx, setRoundIdx] = useState(resumeOk ? resumeAt.roundIdx : 0);
+  const [current, setCurrent] = useState(resumeCur);
   const [inputs, setInputs] = useState({});
   const [confirmed, setConfirmed] = useState({});
   const [starVer, setStarVer] = useState(0);
@@ -772,12 +813,12 @@ function ExamApp({ onHome, exams = ALL_EXAMS, label = "AI 모의고사", accent 
 }
 
 
-function ReviewApp({ onHome }) {
+function ReviewApp({ onHome, initialQueue = null }) {
   const [tick, setTick] = useState(0);
   const [statusF, setStatusF] = useState("all"); // all | s1 | s2 | pin
   const [subjF, setSubjF] = useState("ALL");
-  const [phase, setPhase] = useState("list"); // list | solve
-  const [queue, setQueue] = useState([]);
+  const [phase, setPhase] = useState(initialQueue && initialQueue.length ? "solve" : "list"); // list | solve
+  const [queue, setQueue] = useState(initialQueue || []);
   const [qi, setQi] = useState(0);
   const [val, setVal] = useState("");
   const [checked, setChecked] = useState(false);
@@ -1000,6 +1041,135 @@ function ReviewApp({ onHome }) {
             </div>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+function TodayApp({ onHome, onResume, onReviewQueue }) {
+  const [goal, setGoalState] = useState((loadJSON(LS.settings, { dailyGoal: 30 }).dailyGoal) || 30);
+  const daily = loadJSON(LS.daily, { days: {}, streak: 0, lastDay: null });
+  const resume = loadJSON(LS.resume, null);
+  const today = todayStr();
+  const td = daily.days[today] || { solved: 0, correct: 0, reviewed: 0 };
+  const solved = td.solved || 0;
+  const pct = Math.min(100, Math.round((solved / goal) * 100));
+  const streak = daily.streak || 0;
+  const accuracy = solved > 0 ? Math.round(((td.correct || 0) / solved) * 100) : 0;
+
+  function setGoal(g) {
+    const s = loadJSON(LS.settings, {});
+    s.dailyGoal = g;
+    saveJSON(LS.settings, s);
+    setGoalState(g);
+  }
+
+  // 오늘의 복습 큐: 별 많은 것 → 오래 안 본 것 순으로 상위 15개
+  const dueList = useMemo(() => {
+    const list = collectReviewEntries();
+    list.sort((a, b) => ((b.e.star || 0) - (a.e.star || 0)) || ((a.e.lastAt || 0) - (b.e.lastAt || 0)));
+    return list.slice(0, 15);
+  }, []);
+
+  let resumeInfo = null;
+  if (resume && resume.set) {
+    const exam = examsForSet(resume.set)[resume.roundIdx];
+    if (exam) {
+      const idx = exam.questions.findIndex((x) => x.no === resume.no);
+      resumeInfo = {
+        set: resume.set, roundIdx: resume.roundIdx, no: resume.no,
+        title: exam.title || (SET_LABEL[resume.set] + " " + exam.round + "회"),
+        pos: idx >= 0 ? idx + 1 : 1, total: exam.questions.length,
+      };
+    }
+  }
+
+  return (
+    <div style={S.page}>
+      <div style={{ maxWidth: 640, margin: "0 auto" }}>
+        <button onClick={onHome} style={{ ...S.linkBtn, marginBottom: 8 }}>← 메인 메뉴</button>
+        <div style={{ textAlign: "center", marginBottom: 20 }}>
+          <div style={{ fontSize: 46 }}>📅</div>
+          <h1 style={{ fontSize: 26, fontWeight: 800, margin: "8px 0 4px" }}>오늘 공부</h1>
+          <p style={{ color: "#94a3b8", margin: 0, fontSize: 14 }}>이어서 풀기 · 오늘의 복습 · 목표 진행</p>
+        </div>
+
+        {resumeInfo ? (
+          <button onClick={() => onResume(resumeInfo.set, resumeInfo.roundIdx, resumeInfo.no)} style={{ ...S.bigCard, borderColor: "#22c55e", marginBottom: 16 }}>
+            <div style={{ fontSize: 34 }}>▶️</div>
+            <div style={{ textAlign: "left", flex: 1, minWidth: 0 }}>
+              <div style={S.bigTitle}>이어풀기</div>
+              <div style={S.bigDesc}>{resumeInfo.title} · {resumeInfo.no}번부터</div>
+              <div style={S.bigSub}>마지막 위치 {resumeInfo.pos}/{resumeInfo.total}</div>
+            </div>
+            <span style={S.arrow}>›</span>
+          </button>
+        ) : (
+          <div style={{ ...S.card, marginBottom: 16, textAlign: "center", color: "#94a3b8", fontSize: 13.5 }}>
+            아직 이어풀 문제가 없어요 — 시험을 한 번 풀면 여기서 이어집니다.
+          </div>
+        )}
+
+        <div style={{ ...S.card, marginBottom: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10 }}>
+            <h3 style={{ margin: 0, fontSize: 15 }}>오늘 목표</h3>
+            <span style={{ fontSize: 13, color: "#94a3b8" }}>{solved} / {goal}문항</span>
+          </div>
+          <div style={S.barBg}>
+            <div style={{ ...S.barFill, width: pct + "%", background: pct >= 100 ? "linear-gradient(90deg,#22c55e,#16a34a)" : "linear-gradient(90deg,#38bdf8,#22c55e)" }} />
+          </div>
+          <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+            {[["푼 문항", solved], ["정답률", solved ? accuracy + "%" : "—"], ["복습", td.reviewed || 0], ["🔥 연속", streak + "일"]].map(([lbl, v]) => (
+              <div key={lbl} style={{ flex: 1, textAlign: "center", background: "rgba(0,0,0,.2)", borderRadius: 10, padding: "10px 4px" }}>
+                <div style={{ fontSize: 16, fontWeight: 800 }}>{v}</div>
+                <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 3 }}>{lbl}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{ marginTop: 16 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
+              <span style={{ fontSize: 12, color: "#64748b" }}>하루 목표</span>
+              <span style={{ fontSize: 14, color: "#4ade80", fontWeight: 800 }}>{goal}문항</span>
+            </div>
+            <input
+              type="range"
+              min={5}
+              max={100}
+              step={5}
+              value={goal}
+              onChange={(e) => setGoal(Number(e.target.value))}
+              style={{ width: "100%", height: 26, accentColor: "#22c55e", cursor: "pointer", touchAction: "none" }}
+            />
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10.5, color: "#475569" }}>
+              <span>5</span><span>100문항</span>
+            </div>
+          </div>
+        </div>
+
+        <div style={S.card}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
+            <h3 style={{ margin: 0, fontSize: 15 }}>오늘의 복습 큐</h3>
+            <span style={{ fontSize: 13, color: "#94a3b8" }}>{dueList.length}문제</span>
+          </div>
+          {dueList.length === 0 ? (
+            <div style={{ color: "#94a3b8", fontSize: 13.5, padding: "6px 0" }}>복습할 오답이 없어요. 👍 시험을 풀면 틀린 문제가 모입니다.</div>
+          ) : (
+            <React.Fragment>
+              <div style={{ display: "grid", gap: 7, marginBottom: 14 }}>
+                {dueList.slice(0, 3).map(({ id, e, q }) => (
+                  <div key={id} style={{ fontSize: 12.5, color: "#cbd5e1", display: "flex", gap: 7, alignItems: "center", minWidth: 0 }}>
+                    <span style={{ color: "#fbbf24", flexShrink: 0, width: 30 }}>{starStr(e.star) || "·"}</span>
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>{q.no}. {q.q}</span>
+                  </div>
+                ))}
+                {dueList.length > 3 && <div style={{ fontSize: 12, color: "#64748b", paddingLeft: 37 }}>외 {dueList.length - 3}문제…</div>}
+              </div>
+              <button onClick={() => onReviewQueue(dueList)} style={{ ...S.btn, width: "100%", background: "linear-gradient(135deg,#22c55e,#16a34a)", color: "#fff" }}>
+                📖 오늘의 복습 {dueList.length}문제 시작
+              </button>
+            </React.Fragment>
+          )}
+        </div>
       </div>
     </div>
   );
